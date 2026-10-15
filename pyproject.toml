@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oura-export"
+version = "0.1.0"
+description = "Scheduled download of your own Oura data export (CSV), no subscription."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["playwright==1.56.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.3"]
+
+[project.scripts]
+oura-export = "oura_export.cli:main"
+
+[tool.setuptools]
+packages = ["oura_export"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,46 @@
+# ---------------------------------------------------------------------------
+# NEVER commit personal health data, credentials, or the login session.
+# These patterns are the privacy safety net: even if the repo is public,
+# nothing sensitive leaves your machine.
+# ---------------------------------------------------------------------------
+
+# Your runtime config (contains your email + paths). Copy config.example.json
+# to config.json and edit it locally.
+config.json
+
+# The saved Oura login session (cookies). This is a bearer credential.
+session.json
+*.session.json
+
+# Default data directory if someone points data_dir inside the repo.
+OuraData/
+data/
+*.zip
+*.csv
+*.parquet
+!tests/**/*.csv        # test fixtures are synthetic and safe to track
+
+# Logs
+*.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- R ----
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

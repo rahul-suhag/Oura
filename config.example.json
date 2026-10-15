@@ -1,0 +1,18 @@
+{
+  "email": "you@example.com",
+
+  "//data_dir": "Base folder for all downloads. ~ is expanded. On macOS you can point this into iCloud Drive so the CSVs appear on your iPhone, e.g. ~/Library/Mobile Documents/com~apple~CloudDocs/OuraData",
+  "data_dir": "~/OuraData",
+
+  "//headless": "true for scheduled runs. Set false with `oura-export login --headful` the first time if you want to watch the login.",
+  "headless": true,
+
+  "//request_timeout_minutes": "How long to wait for Oura to build the export before giving up.",
+  "request_timeout_minutes": 30,
+
+  "//poll_interval_seconds": "How often to re-check whether the export is ready.",
+  "poll_interval_seconds": 60,
+
+  "//notify": "Best-effort desktop notification on success/failure (macOS & Windows).",
+  "notify": true
+}

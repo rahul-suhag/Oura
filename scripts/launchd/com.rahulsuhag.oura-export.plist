@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd agent: run `oura-export fetch` once a day.
+
+  Install:
+    1. Edit the two <string> paths below:
+         - the absolute path to the `oura-export` executable (run `which oura-export`
+           inside your virtualenv to find it), and
+         - WorkingDirectory if you like.
+    2. Copy this file to  ~/Library/LaunchAgents/
+    3. Load it:   launchctl load ~/Library/LaunchAgents/com.rahulsuhag.oura-export.plist
+    4. Check:     launchctl list | grep oura-export
+
+  launchd runs a missed job when the Mac next wakes (unlike cron), so a daily
+  export still happens even if the machine was asleep at the scheduled time.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rahulsuhag.oura-export</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- CHANGE this to the output of `which oura-export` -->
+        <string>/CHANGE/ME/path/to/venv/bin/oura-export</string>
+        <string>fetch</string>
+    </array>
+
+    <!-- Daily at 11:00 local time. Edit Hour/Minute to taste. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>11</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/oura-export.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/oura-export.err.log</string>
+</dict>
+</plist>

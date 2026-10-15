@@ -1,0 +1,6 @@
+# Acquisition layer only. Kept deliberately minimal.
+# Playwright drives the Oura Membership Hub export page in a headless browser.
+playwright==1.56.0
+
+# Dev/test only:
+pytest==8.3.3
