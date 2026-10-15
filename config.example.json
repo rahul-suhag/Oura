@@ -1,18 +1,28 @@
 {
-  "email": "you@example.com",
+  "email": "you@gmail.com",
 
-  "//data_dir": "Base folder for all downloads. ~ is expanded. On macOS you can point this into iCloud Drive so the CSVs appear on your iPhone, e.g. ~/Library/Mobile Documents/com~apple~CloudDocs/OuraData",
+  "//data_dir": "Where exports land. ~ is expanded. Point it into iCloud Drive or OneDrive to see the CSVs on your iPhone, e.g. C:/Users/you/iCloudDrive/OuraData",
   "data_dir": "~/OuraData",
 
-  "//headless": "true for scheduled runs. Set false with `oura-export login --headful` the first time if you want to watch the login.",
+  "//headless": "true = no browser window during scheduled runs.",
   "headless": true,
 
-  "//request_timeout_minutes": "How long to wait for Oura to build the export before giving up.",
-  "request_timeout_minutes": 30,
+  "//code_source": "How the job gets Oura's emailed sign-in code: 'gmail' reads it over IMAP with an app password (unattended); 'prompt' means a person types it.",
+  "code_source": "gmail",
+  "imap_host": "imap.gmail.com",
+  "//imap_user": "Blank means the same address as email.",
+  "imap_user": "",
+  "code_sender": "ouraring.com",
 
-  "//poll_interval_seconds": "How often to re-check whether the export is ready.",
+  "//min_hours_between_requests": "Request a new export at most this often (22 so a 3-hourly schedule doesn't drift later each day).",
+  "min_hours_between_requests": 22,
+  "//wait_minutes": "After requesting, wait this long in the same run; otherwise a later run collects it.",
+  "wait_minutes": 45,
   "poll_interval_seconds": 60,
+  "give_up_after_hours": 48,
 
-  "//notify": "Best-effort desktop notification on success/failure (macOS & Windows).",
+  "//max_logins_per_day": "Unattended sign-in attempts allowed per 24 h, so a problem can't flood your inbox or lock the account.",
+  "max_logins_per_day": 3,
+
   "notify": true
 }

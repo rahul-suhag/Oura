@@ -1,43 +1,37 @@
 """Command-line entry point.
 
-    oura-export login     one-time, interactive: logs in, pastes emailed code
-    oura-export fetch      scheduled: request a new export, wait, download, archive
-    oura-export download   download the latest EXISTING export (no new request)
-    oura-export status     show config + whether the saved session still works
-    oura-export init       write a starter config.json
+    oura-export init               write a starter config.json
+    oura-export set-mail-password  store your Gmail app password in the OS keychain
+    oura-export login              sign in once with a visible browser
+    oura-export run                one scheduled run (alias: fetch)
+    oura-export status             show settings and the last run
 
-All commands exit non-zero on failure so a scheduler can detect problems.
+Exit codes (for schedulers): 0 ok, 1 error, 2 sign-in needed, 3 another run busy.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
+import imaplib
 import logging
 import sys
-import tempfile
-from datetime import date
 from pathlib import Path
 
-from . import __version__, config as config_mod, paths
-from .notify import notify
+from . import __version__, codes, config as config_mod, job, paths
+from .state import State
 
 
 def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(paths.state_dir() / "oura-export.log"),
-        ],
-    )
+    handlers: list[logging.Handler] = [logging.FileHandler(paths.state_dir() / "oura-export.log")]
+    if sys.stderr is not None:  # pythonw.exe (Windows scheduler) has no console
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, handlers=handlers,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 
 def _load_cfg(args) -> config_mod.Config:
-    cfg = config_mod.load(Path(args.config) if args.config else None)
-    if args.headful:
-        cfg.headless = False
-    return cfg
+    return config_mod.load(Path(args.config) if args.config else None)
 
 
 def cmd_init(args) -> int:
@@ -48,127 +42,108 @@ def cmd_init(args) -> int:
     cfg = config_mod.Config(**config_mod.DEFAULTS)
     if args.email:
         cfg.email = args.email
+    if args.data_dir:
+        cfg.data_dir = args.data_dir
     config_mod.save(cfg, path)
-    print(f"Wrote starter config to {path}. Edit it, then run `oura-export login`.")
+    print(f"Wrote {path}.\nNext: oura-export set-mail-password, then oura-export login.")
     return 0
 
 
-def cmd_status(args) -> int:
+def cmd_set_mail_password(args) -> int:
     cfg = _load_cfg(args)
-    print(f"version       : {__version__}")
-    print(f"email         : {cfg.email or '(not set)'}")
-    print(f"data_dir      : {cfg.data_path}")
-    print(f"session file  : {paths.session_path()} "
-          f"({'present' if paths.session_path().exists() else 'missing'})")
-    # Avoid launching a browser just for status unless asked.
-    if args.check:
-        from .hub import OuraHub
-        with OuraHub(email=cfg.email, headless=cfg.headless) as hub:
-            ok = hub.is_authenticated()
-        print(f"session valid : {ok}")
-        return 0 if ok else 2
-    return 0
-
-
-def _run_pipeline(cfg: config_mod.Config, request_new: bool) -> int:
-    from .hub import OuraHub, SessionExpired, HubError
-    from . import archive
-
-    try:
-        with OuraHub(email=cfg.email, headless=cfg.headless) as hub:
-            if not hub.is_authenticated():
-                raise SessionExpired("Saved session invalid. Run `oura-export login`.")
-
-            if request_new:
-                hub.request_export()
-                ready = hub.wait_until_ready(
-                    timeout_minutes=cfg.request_timeout_minutes,
-                    poll_seconds=cfg.poll_interval_seconds,
-                )
-                if not ready:
-                    raise HubError("Timed out waiting for Oura to build the export.")
-
-            with tempfile.TemporaryDirectory() as tmp:
-                zip_path = hub.download(Path(tmp) / "oura_export.zip")
-                result = archive.archive_zip(zip_path, cfg.data_path, date.today())
-
-        msg = f"{len(result.csv_files)} CSVs -> {result.latest_dir}"
-        logging.getLogger("oura_export").info("Done: %s", msg)
-        if cfg.notify:
-            notify("Oura export updated", msg)
-        print(msg)
-        return 0
-
-    except SessionExpired as e:
-        logging.getLogger("oura_export").error("%s", e)
-        if cfg.notify:
-            notify("Oura export needs login", str(e))
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
-    except Exception as e:  # noqa: BLE001 - top-level reporter for the scheduler
-        logging.getLogger("oura_export").exception("Pipeline failed")
-        if cfg.notify:
-            notify("Oura export failed", str(e))
-        print(f"ERROR: {e}", file=sys.stderr)
+    user = cfg.imap_user or cfg.email
+    if not user:
+        print("Set your email first: oura-export init --email you@gmail.com", file=sys.stderr)
         return 1
-
-
-def cmd_fetch(args) -> int:
-    return _run_pipeline(_load_cfg(args), request_new=True)
-
-
-def cmd_download(args) -> int:
-    return _run_pipeline(_load_cfg(args), request_new=False)
+    try:
+        import keyring
+    except ImportError:
+        print(f"The 'keyring' package is missing; set {codes.PASSWORD_ENV} instead.", file=sys.stderr)
+        return 1
+    password = getpass.getpass(f"Gmail app password for {user} (typing is hidden): ").replace(" ", "")
+    if not password:
+        print("Nothing entered; unchanged.")
+        return 1
+    try:  # check it before storing, so a typo shows up now rather than at 3 a.m.
+        with imaplib.IMAP4_SSL(cfg.imap_host, 993, timeout=30) as conn:
+            conn.login(user, password)
+    except (imaplib.IMAP4.error, OSError) as exc:
+        print(f"Gmail rejected that password ({exc}). Not stored.", file=sys.stderr)
+        return 1
+    keyring.set_password(codes.KEYRING_SERVICE, user, password)
+    print("Gmail accepted it. Stored in your system keychain (not in any file).")
+    return 0
 
 
 def cmd_login(args) -> int:
     cfg = _load_cfg(args)
     if not cfg.email:
-        print("Set your email first: `oura-export init --email you@example.com`.",
-              file=sys.stderr)
+        print("Set your email first: oura-export init --email you@gmail.com", file=sys.stderr)
         return 1
-    from .hub import OuraHub, HubError
+    # Use the mailbox if it's set up, so this also proves the unattended path works.
+    source = codes.make_code_source(cfg, interactive=True)
+    print("Signing in to Oura" + (" (reading the code from Gmail)..." if isinstance(source, codes.ImapCodeSource)
+                                  else "; you'll be asked for the emailed code..."))
+    code = job.interactive_login(cfg, source, headless=args.headless)
+    print("Signed in. Scheduled runs will reuse this login." if code == job.OK
+          else f"Sign-in failed. Screenshots are in {paths.debug_dir()}")
+    return code
 
-    def ask_code() -> str:
-        return input("Enter the 6-digit code Oura emailed you: ")
 
-    # Login is easiest to watch; default to headful unless explicitly headless.
-    headless = cfg.headless and not args.headful and args.headless_login
-    try:
-        with OuraHub(email=cfg.email, headless=headless) as hub:
-            hub.interactive_login(ask_code)
-        print("Logged in. Session saved; scheduled `fetch` runs can now proceed.")
-        return 0
-    except HubError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 1
+def cmd_run(args) -> int:
+    cfg = _load_cfg(args)
+    source = codes.make_code_source(cfg, interactive=args.interactive)
+    return job.run_once(cfg, source, headless=False if args.show_browser else None)
+
+
+def cmd_status(args) -> int:
+    cfg = _load_cfg(args)
+    state = State.load(paths.state_file())
+    user = cfg.imap_user or cfg.email
+    print(f"version            : {__version__}")
+    print(f"email              : {cfg.email or '(not set)'}")
+    print(f"data_dir           : {cfg.data_path}")
+    print(f"code source        : {cfg.code_source}"
+          + (f" ({'password stored' if user and codes.mail_password(user) else 'NO password stored'})"
+             if cfg.code_source == 'gmail' else ""))
+    print(f"browser profile    : {paths.profile_dir()} "
+          f"({'present' if paths.profile_dir().exists() else 'missing'})")
+    print(f"last run           : {state.last_run_at or '-'}")
+    print(f"last result        : {state.last_result}")
+    print(f"last new export    : {state.last_new_export_at or '-'}")
+    print(f"waiting since      : {state.pending_since or '-'}")
+    print(f"sign-in needed     : {state.login_needed}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="oura-export", description=__doc__)
+    p = argparse.ArgumentParser(prog="oura-export", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", help="Path to config.json (default: ~/.oura-export/config.json)")
-    p.add_argument("--headful", action="store_true", help="Show the browser window.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("init", help="Write a starter config.json")
     s.add_argument("--email")
+    s.add_argument("--data-dir")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_init)
 
-    s = sub.add_parser("login", help="Interactive one-time login")
-    s.add_argument("--headless-login", action="store_true",
-                   help="Attempt login without showing the browser (advanced).")
+    s = sub.add_parser("set-mail-password", help="Store and check your Gmail app password")
+    s.set_defaults(func=cmd_set_mail_password)
+
+    s = sub.add_parser("login", help="Sign in once (visible browser)")
+    s.add_argument("--headless", action="store_true", help="Don't show the browser.")
     s.set_defaults(func=cmd_login)
 
-    s = sub.add_parser("fetch", help="Request a new export, wait, download, archive")
-    s.set_defaults(func=cmd_fetch)
+    for name in ("run", "fetch"):
+        s = sub.add_parser(name, help="One scheduled run" + (" (alias of run)" if name == "fetch" else ""))
+        s.add_argument("--show-browser", action="store_true", help="Show the browser (debugging).")
+        s.add_argument("--interactive", action="store_true",
+                       help="If sign-in is needed and Gmail isn't set up, ask for the code.")
+        s.set_defaults(func=cmd_run)
 
-    s = sub.add_parser("download", help="Download the latest existing export only")
-    s.set_defaults(func=cmd_download)
-
-    s = sub.add_parser("status", help="Show config and session state")
-    s.add_argument("--check", action="store_true", help="Also open a browser to test the session.")
+    s = sub.add_parser("status", help="Show settings and the last run")
     s.set_defaults(func=cmd_status)
     return p
 

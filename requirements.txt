@@ -1,6 +1,8 @@
 # Acquisition layer only. Kept deliberately minimal.
-# Playwright drives the Oura Membership Hub export page in a headless browser.
+# Playwright drives the Oura Membership Hub in a headless browser.
 playwright==1.56.0
+# Stores the Gmail app password in Windows Credential Manager / macOS Keychain.
+keyring>=24
 
 # Dev/test only:
 pytest==8.3.3

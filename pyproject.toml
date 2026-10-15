@@ -9,7 +9,7 @@ description = "Scheduled download of your own Oura data export (CSV), no subscri
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["playwright==1.56.0"]
+dependencies = ["playwright==1.56.0", "keyring>=24"]
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.3"]

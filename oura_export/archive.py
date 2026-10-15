@@ -12,6 +12,7 @@ analysis layer, the Files app on your phone) can point at one stable path.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import zipfile
@@ -26,6 +27,15 @@ class ArchiveResult:
     extracted_dir: Path
     latest_dir: Path
     csv_files: list[str]
+
+
+def sha256_of(path: Path) -> str:
+    """Fingerprint of a downloaded file, to tell a new export from a repeat."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:

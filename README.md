@@ -13,97 +13,133 @@ history without a subscription.
 
 ## What it does
 
-1. `login` — one-time, interactive. Logs into the Membership Hub with the
-   passwordless email-code flow and saves the session cookie locally.
-2. `fetch` — scheduled. Requests a fresh export, waits for Oura to build it,
-   downloads the zip, and unpacks it into a tidy folder tree.
-3. An R (`data.table`) layer turns the CSVs into a merged daily table for analysis.
+A job that runs every few hours on your computer. Each run:
+
+1. Opens the Membership Hub's export page in a hidden browser that keeps its
+   login like your everyday browser does.
+2. **If Oura has signed it out**, it signs back in by itself: enters your email,
+   chooses "Email me a code" (never the passkey button), reads the 6-digit code
+   from your Gmail, and types it in.
+3. Collects a finished export, but only if it is genuinely new (it compares
+   file fingerprints, so an old file is never saved as a new one).
+4. Requests the next export about once a day, and waits a while for it. If Oura
+   is slow, a later run collects it.
 
 ```
 ~/OuraData/
+  STATUS.txt                                  # last run, readable from your phone
   raw/2026-10-15/oura_export_2026-10-15.zip   # untouched download
   extracted/2026-10-15/*.csv                  # that day's CSVs
   latest/*.csv                                # always the newest export
 ```
 
-On macOS you can set `data_dir` into iCloud Drive so the CSVs appear in the
-Files app on your iPhone.
+Point `data_dir` into iCloud Drive or OneDrive and the CSVs (and STATUS.txt)
+show up on your iPhone.
 
 ## Requirements
 
-- Python 3.11+
-- An Oura account (any ring). *Note:* Oura now requires a membership for **API**
-  access on Gen3/Ring 4/Ring 5, but the **export used here is available to all
-  users** — that is the whole point of this tool.
+- Python 3.11+ on the machine that runs the schedule (your always-on Windows
+  desktop is the best host; a Mac works too, but use only one of them).
+- An Oura account whose sign-in codes go to **Gmail**. (Oura now requires a
+  membership for API access on Gen3 / Ring 4 / Ring 5, but the export used here
+  is available to everyone.)
 
 ## Install
 
 ```bash
-git clone https://github.com/rahul-suhag/oura.git
-cd oura
-python -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\activate
+git clone https://github.com/rahul-suhag/Oura.git
+cd Oura
+python -m venv venv
+venv\Scripts\activate                 # macOS: source venv/bin/activate
 pip install -e .
-python -m playwright install chromium                 # one-time browser download
+python -m playwright install chromium
 ```
 
-## First run
+## One-time setup (about 10 minutes)
 
-```bash
-oura-export init --email you@example.com   # writes ~/.oura-export/config.json
-oura-export login                          # opens a browser; paste the emailed code
-oura-export fetch                          # request + download + unpack
-oura-export status                         # see config and session state
-```
+1. **Config**
 
-`login` is the only step that needs you present — Oura emails a 6-digit code and
-there is no password. The saved session lets scheduled `fetch` runs proceed
-unattended **until the cookie expires**, at which point `fetch` stops and tells
-you (and sends a desktop notification) to run `login` again. We deliberately do
-**not** read your mailbox to re-login automatically.
+   ```bash
+   oura-export init --email you@gmail.com --data-dir "C:/Users/you/iCloudDrive/OuraData"
+   ```
 
-## Scheduling
+2. **Gmail app password** so the job can read Oura's code email.
+   Turn on 2-Step Verification for your Google account if it isn't already,
+   then create an app password at <https://myaccount.google.com/apppasswords>
+   (name it "oura-export"). Then:
 
-Your Windows desktop is the more reliable host (it's almost always on), but both
-are set up to catch up a missed run after wake/power-on.
+   ```bash
+   oura-export set-mail-password
+   ```
 
-**macOS (launchd):** edit the executable path in
-`scripts/launchd/com.rahulsuhag.oura-export.plist`, copy it to
-`~/Library/LaunchAgents/`, then `launchctl load` it. (launchd runs a missed job
-when the Mac next wakes — better than cron for a laptop.)
+   It checks the password with Gmail before storing it in Windows Credential
+   Manager / macOS Keychain. It is never written to a file.
 
-**Windows (Task Scheduler):** in an elevated PowerShell:
+3. **First sign-in**, with a visible browser so you can watch:
 
-```powershell
-.\scripts\windows\Register-OuraExportTask.ps1 -OuraExportExe "C:\path\to\venv\Scripts\oura-export.exe" -At "11:00"
-```
+   ```bash
+   oura-export login
+   ```
+
+   It fills in your email, picks "Email me a code" and reads the code from
+   Gmail itself. If this works, unattended sign-in works.
+
+4. **Schedule it** (pick one machine):
+
+   - Windows: `powershell -ExecutionPolicy Bypass -File scripts\windows\Register-OuraExportTask.ps1`
+   - macOS: edit the paths in `scripts/launchd/com.rahulsuhag.oura-export.plist`,
+     copy it to `~/Library/LaunchAgents/` and `launchctl load` it.
+
+Check on it any time with `oura-export status`, or open `STATUS.txt`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `oura-export init` | write `~/.oura-export/config.json` |
+| `oura-export set-mail-password` | check and store the Gmail app password |
+| `oura-export login` | sign in once with a visible browser |
+| `oura-export run` | one scheduled run (`fetch` is an alias); `--show-browser` to watch |
+| `oura-export status` | settings, last run, whether sign-in is needed |
+
+Exit codes for schedulers: 0 ok, 1 error, 2 sign-in needed, 3 another run busy.
 
 ## Analysis (R / data.table)
 
 ```bash
 Rscript analysis/load_oura.R ~/OuraData/latest    # writes daily_merged.csv
+Rscript analysis/eda_report.R ~/OuraData/latest   # EDA report in latest/eda/
 ```
 
-See `analysis/README.md`. Requires R with `data.table` installed.
+See `analysis/README.md`. Requires R with `data.table` and `ggplot2`.
 
 ## Privacy & security
 
-- Your email, the session cookie, and all downloaded data live under
-  `~/.oura-export/` and your `data_dir` — **never inside this repo**. `.gitignore`
-  enforces that, so the repo stays safe to keep private (recommended) or even
-  public without leaking anything.
-- The session cookie is a bearer credential; treat `~/.oura-export/session.json`
-  like a password.
+- Config, job state, logs and the browser profile live in `~/.oura-export/`;
+  exports live in your `data_dir`. **Nothing personal is ever inside this repo**
+  (`.gitignore` enforces it).
+- `~/.oura-export/browser-profile` holds your Oura login: treat it like a password.
+- The Gmail **app password** can read your whole mailbox. It is kept in your
+  system keychain, the job only ever opens mail read-only (it never marks,
+  moves or deletes anything), and you can revoke it at any time at
+  <https://myaccount.google.com/apppasswords>. For tighter isolation, add a
+  Gmail filter that forwards Oura's emails to a separate Gmail account and give
+  the job that account's app password instead (set `imap_user` in the config).
+- Unattended sign-in is capped at 3 attempts per 24 h so a problem can't flood
+  your inbox or get the account locked.
 
 ## Status & limitations
 
-- The archive/config logic is covered by unit tests (`pytest`).
-- **The live login and download have not been verified end-to-end** — the build
-  environment has no network access to Oura. Expect to run `oura-export login
-  --headful` once to confirm the selectors match the current page. The login and
-  export selectors are isolated and commented in `oura_export/hub.py` under
-  `>>> Adjust here <<<` markers for easy fixing if Oura changes the page.
-- Oura may rate-limit how often an export can be requested. Daily is the default;
-  if Oura throttles, increase the interval.
+- Tested: archive/config/state logic, reading codes from email (fake mailbox),
+  and the full unattended loop (sign-in, re-sign-in after the login expires,
+  request, wait, download, "old file is not new") against a fake copy of the
+  Oura site in a real headless Chromium. `pytest` runs all of it.
+- **Not yet verified against Oura's real pages.** The selectors come from
+  Cracked-Oura and may be out of date. They all sit in one block at the top of
+  `oura_export/hub.py`. Any failure saves a screenshot and the page HTML to
+  `~/.oura-export/debug/` so it can be fixed quickly.
+- Oura may limit how often an export can be requested. The default is about
+  once a day (`min_hours_between_requests`).
 - How frequently new data appears in the export is governed by when your ring
   last synced to the Oura app — this tool can't make data appear faster than that.
 

@@ -12,7 +12,8 @@ def test_defaults_when_missing(tmp_path: Path):
     cfg = config_mod.load(tmp_path / "nope.json")
     assert cfg.email == ""
     assert cfg.headless is True
-    assert cfg.request_timeout_minutes == 30
+    assert cfg.code_source == "gmail"
+    assert cfg.max_logins_per_day == 3
 
 
 def test_roundtrip_and_comment_stripping(tmp_path: Path):

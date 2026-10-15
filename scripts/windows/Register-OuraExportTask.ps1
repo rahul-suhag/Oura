@@ -1,47 +1,53 @@
 <#
-  Register a Windows Scheduled Task that runs `oura-export fetch` once a day.
+  Register a Windows Scheduled Task that runs `oura-export run` every few hours.
 
-  Your Windows desktop is "almost always on", which makes it the more reliable
-  host of the two. This task is set to run whether or not you are logged in and
-  to run as soon as possible after a missed start (e.g. the PC was off).
+  Each run is short: it signs in if needed (reading the code from Gmail),
+  collects a finished export, and requests a new one about once a day. Running
+  every few hours means a slow export is picked up soon after Oura finishes it.
 
-  Usage (in an elevated PowerShell, from the repo root):
+  Usage (normal PowerShell, from the repo root, after setting up the venv):
 
-      .\scripts\windows\Register-OuraExportTask.ps1 `
-          -OuraExportExe "C:\path\to\venv\Scripts\oura-export.exe" `
-          -At "11:00"
+      powershell -ExecutionPolicy Bypass -File scripts\windows\Register-OuraExportTask.ps1
 
-  Remove it later with:
-      Unregister-ScheduledTask -TaskName "OuraExport" -Confirm:$false
+  Options:  -EveryHours 3   -TaskName OuraExport   -Python <path to pythonw.exe>
+  Remove:   Unregister-ScheduledTask -TaskName OuraExport -Confirm:$false
+
+  The task runs while you are signed in to Windows (it needs your Credential
+  Manager entry for the Gmail app password). Missed runs, e.g. while the PC
+  was off, start as soon as it is back.
 #>
 
 param(
-    [Parameter(Mandatory = $true)] [string] $OuraExportExe,
-    [string] $At = "11:00",
-    [string] $TaskName = "OuraExport"
+    [int]    $EveryHours = 3,
+    [string] $TaskName = "OuraExport",
+    [string] $Python = ""
 )
+$ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $OuraExportExe)) {
-    throw "oura-export executable not found at: $OuraExportExe"
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+if (-not $Python) { $Python = Join-Path $repo "venv\Scripts\pythonw.exe" }
+if (-not (Test-Path $Python)) {
+    throw "Python not found at $Python. Create the venv first (README, 'Install')."
 }
 
-$action   = New-ScheduledTaskAction -Execute $OuraExportExe -Argument "fetch"
-$trigger  = New-ScheduledTaskTrigger -Daily -At $At
+# pythonw.exe runs without flashing a console window every few hours.
+$action = New-ScheduledTaskAction -Execute $Python -Argument "-m oura_export run" -WorkingDirectory $repo
 
-# Run even on battery, and catch up a missed run after the PC wakes/powers on.
+# A daily trigger that repeats every N hours for a day = every N hours, forever.
+$trigger = New-ScheduledTaskTrigger -Daily -At "00:05"
+$repeat  = New-ScheduledTaskTrigger -Once -At "00:05" `
+    -RepetitionInterval (New-TimeSpan -Hours $EveryHours) -RepetitionDuration (New-TimeSpan -Days 1)
+$trigger.Repetition = $repeat.Repetition
+
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -WakeToRun
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
+    -MultipleInstances IgnoreNew
 
-Register-ScheduledTask `
-    -TaskName   $TaskName `
-    -Action     $action `
-    -Trigger    $trigger `
-    -Settings   $settings `
-    -Description "Daily download of my Oura data export" `
-    -Force
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+    -Description "Downloads my Oura data export (oura-export)." -Force | Out-Null
 
-Write-Host "Registered scheduled task '$TaskName' to run '$OuraExportExe fetch' daily at $At."
-Write-Host "Test it now with:  Start-ScheduledTask -TaskName $TaskName"
+Write-Host "Registered '$TaskName': runs every $EveryHours h while you're signed in to Windows."
+Write-Host "Run it now:  Start-ScheduledTask -TaskName $TaskName"
+Write-Host "Check it:    oura-export status   (or open STATUS.txt in your data folder)"

@@ -2,11 +2,11 @@
 
 Two distinct trees, kept apart on purpose:
 
-  * state_dir  -> ~/.oura-export       cookies/session + config (NEVER in the repo)
-  * data_dir   -> config["data_dir"]   the downloaded exports (NEVER in the repo)
+  * state_dir  -> ~/.oura-export      browser profile, config, job state, logs
+  * data_dir   -> config["data_dir"]  the downloaded exports
 
-Keeping both outside the working tree is what guarantees that cloning or
-publishing the repo cannot leak your credentials or health data.
+Both live outside the working tree, which is what guarantees that cloning or
+publishing the repo cannot leak your login or your health data.
 """
 
 from __future__ import annotations
@@ -16,23 +16,36 @@ from pathlib import Path
 
 
 def state_dir() -> Path:
-    """Where the login session and default config live.
-
-    Honours OURA_EXPORT_HOME so tests (and power users) can redirect it.
-    """
+    """Honours OURA_EXPORT_HOME so tests (and power users) can redirect it."""
     override = os.environ.get("OURA_EXPORT_HOME")
     base = Path(override).expanduser() if override else Path.home() / ".oura-export"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
-def session_path() -> Path:
-    """Playwright storage_state file (cookies). Treat as a bearer credential."""
-    return state_dir() / "session.json"
-
-
 def default_config_path() -> Path:
     return state_dir() / "config.json"
+
+
+def profile_dir() -> Path:
+    """Persistent Chromium profile. Holds your Oura login: treat like a password."""
+    return state_dir() / "browser-profile"
+
+
+def state_file() -> Path:
+    return state_dir() / "state.json"
+
+
+def lock_file() -> Path:
+    return state_dir() / "run.lock"
+
+
+def debug_dir() -> Path:
+    return state_dir() / "debug"
+
+
+def work_dir() -> Path:
+    return state_dir() / "incoming"
 
 
 def expand(path: str | os.PathLike[str]) -> Path:
