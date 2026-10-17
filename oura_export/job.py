@@ -211,9 +211,22 @@ def _collect_if_ready(hub: Hub, cfg: Config, state: State, page: PageState,
         state.last_new_export_at = now
         if finished:
             state.pending_since = None
-        return [f"saved new export ({len(result.csv_files)} CSVs) to {result.latest_dir}"]
+        notes = [f"saved new export ({len(result.csv_files)} CSVs) to {result.latest_dir}"]
+        notes.append(_refresh_dashboard(result.latest_dir, cfg.data_path))
+        return notes
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _refresh_dashboard(latest_dir, data_dir) -> str:
+    """Rebuild dashboard.html/.svg. A failure here never undoes the saved data."""
+    try:
+        from . import dashboard
+        dashboard.write_dashboard(latest_dir, data_dir)
+        return "dashboard updated"
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Dashboard generation failed")
+        return f"dashboard not updated ({exc})"
 
 
 def _wait_for_export(hub: Hub, cfg: Config, state: State, now: datetime) -> list[str]:

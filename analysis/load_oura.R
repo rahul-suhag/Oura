@@ -37,14 +37,50 @@ read_oura <- function(latest_dir) {
   tables
 }
 
+#' Daily sleep metrics from sleepmodel.csv, which has one row per sleep
+#' SESSION (naps included). We keep the `long_sleep` session per day, falling
+#' back to the longest session, so naps never masquerade as the night.
+sleep_sessions_daily <- function(sm) {
+  if (is.null(sm) || !"day" %in% names(sm)) return(NULL)
+  sm <- copy(sm)
+  # Sort key: preferred session first within each day (long_sleep, then longest).
+  sm[, pref := if ("type" %in% names(sm)) as.integer(type == "long_sleep") else 1L]
+  if ("total_sleep_duration" %in% names(sm)) {
+    sm[, dur := suppressWarnings(as.numeric(total_sleep_duration))]
+  } else sm[, dur := 0]
+  setorder(sm, day, -pref, -dur, na.last = TRUE)
+  daily <- sm[, .SD[1L], by = day]
+  keep <- intersect(c("total_sleep_duration", "deep_sleep_duration", "rem_sleep_duration",
+                      "light_sleep_duration", "awake_time", "efficiency", "latency",
+                      "average_heart_rate", "average_hrv", "lowest_heart_rate",
+                      "time_in_bed", "restless_periods"), names(daily))
+  daily[, c("day", keep), with = FALSE]
+}
+
+#' dailyspo2.csv stores spo2_percentage as JSON like {"average": 96.5}.
+#' Pull the number out (no JSON package needed) into spo2_average.
+spo2_average <- function(sp) {
+  if (is.null(sp) || !"spo2_percentage" %in% names(sp) || is.numeric(sp$spo2_percentage)) return(sp)
+  sp <- copy(sp)
+  # fread keeps CSV-escaped quotes ({""average"": 97}), hence "* not "?.
+  sp[, spo2_average := suppressWarnings(as.numeric(
+        sub('.*average"*[[:space:]]*:[[:space:]]*(-?[0-9.]+).*', "\\1", spo2_percentage)))]
+  sp[!grepl("average", spo2_percentage, fixed = TRUE), spo2_average := NA_real_]
+  sp[, spo2_percentage := NULL]   # the raw JSON string is not analysable
+  sp
+}
+
 #' Build one daily table by joining the daily-grain files on `day`.
 #'
 #' Only the files that exist are joined, so this is robust to Oura adding or
 #' renaming files. Scores are kept as-is; we add convenience duration columns.
 build_daily <- function(tables) {
+  # Derived daily tables from the non-daily or JSON-bearing files.
+  tables$sleepmodel_daily <- sleep_sessions_daily(tables$sleepmodel)
+  tables$dailyspo2 <- spo2_average(tables$dailyspo2)
   # Candidate daily-grain tables, most-useful first. Missing ones are skipped.
-  wanted <- c("dailysleep", "dailyreadiness", "dailyactivity",
-              "dailyspo2", "dailystress", "dailyresilience")
+  wanted <- c("dailysleep", "sleepmodel_daily", "dailyreadiness", "dailyactivity",
+              "dailyspo2", "dailystress", "dailyresilience", "dailycardiovascularage")
   present <- wanted[wanted %in% names(tables)]
   if (length(present) == 0L) stop("No recognised daily tables in the export.")
 
@@ -52,7 +88,12 @@ build_daily <- function(tables) {
   # (e.g. every file has its own `score`).
   prepped <- lapply(present, function(nm) {
     dt <- copy(tables[[nm]])
-    if (!"day" %in% names(dt)) return(NULL)
+    if (is.null(dt) || !"day" %in% names(dt)) return(NULL)
+    # Drop bookkeeping columns that carry no analytical signal.
+    drop <- intersect(c("id", "timestamp", "contributors"), names(dt))
+    if (length(drop)) dt[, (drop) := NULL]
+    # One row per day: a duplicated day would multiply rows in the joins.
+    dt <- unique(dt, by = "day")
     keep <- setdiff(names(dt), "day")
     setnames(dt, keep, paste0(nm, "_", keep))
     dt

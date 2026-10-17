@@ -92,6 +92,24 @@ python -m playwright install chromium
 
 Check on it any time with `oura-export status`, or open `STATUS.txt`.
 
+## On your iPhone
+
+After every fetch the job also writes **`dashboard.html`** (and `dashboard.svg`)
+into the data folder: your latest readiness, sleep and activity scores, sleep
+hours, HRV, heart rate, steps and more, with 90-day trends and a table view.
+It is one self-contained file with no scripts and no outside links, so the
+Files app shows it as-is, light or dark to match your phone.
+
+1. Put `data_dir` inside iCloud Drive (or OneDrive) when you run `init`, e.g.
+   `C:/Users/you/iCloudDrive/OuraData`.
+2. On the iPhone: Files → iCloud Drive → OuraData → `dashboard.html`.
+3. For a Home Screen icon: Shortcuts → + → add **"Get File"** (pick
+   `dashboard.html`, turn off "Show Document Picker") → add **"Quick Look"** →
+   name it "Oura" → ⋯ → **Add to Home Screen**. One tap opens the latest view.
+
+If the HTML ever shows blank in a preview, open `dashboard.svg` instead; it is
+the same charts as a plain image.
+
 ## Commands
 
 | Command | What it does |
@@ -100,6 +118,7 @@ Check on it any time with `oura-export status`, or open `STATUS.txt`.
 | `oura-export set-mail-password` | check and store the Gmail app password |
 | `oura-export login` | sign in once with a visible browser |
 | `oura-export run` | one scheduled run (`fetch` is an alias); `--show-browser` to watch |
+| `oura-export dashboard` | rebuild `dashboard.html`/`.svg` from the newest CSVs |
 | `oura-export status` | settings, last run, whether sign-in is needed |
 
 Exit codes for schedulers: 0 ok, 1 error, 2 sign-in needed, 3 another run busy.

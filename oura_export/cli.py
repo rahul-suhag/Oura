@@ -4,6 +4,7 @@
     oura-export set-mail-password  store your Gmail app password in the OS keychain
     oura-export login              sign in once with a visible browser
     oura-export run                one scheduled run (alias: fetch)
+    oura-export dashboard          rebuild dashboard.html/.svg from the newest CSVs
     oura-export status             show settings and the last run
 
 Exit codes (for schedulers): 0 ok, 1 error, 2 sign-in needed, 3 another run busy.
@@ -96,6 +97,21 @@ def cmd_run(args) -> int:
     return job.run_once(cfg, source, headless=False if args.show_browser else None)
 
 
+def cmd_dashboard(args) -> int:
+    """Rebuild the dashboard from the newest CSVs (also runs after every fetch)."""
+    from . import dashboard
+    cfg = _load_cfg(args)
+    latest = Path(args.latest) if args.latest else cfg.data_path / "latest"
+    out = Path(args.out) if args.out else cfg.data_path
+    try:
+        path = dashboard.write_dashboard(latest, out)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"Wrote {path} and {path.with_suffix('.svg')}")
+    return 0
+
+
 def cmd_status(args) -> int:
     cfg = _load_cfg(args)
     state = State.load(paths.state_file())
@@ -142,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--interactive", action="store_true",
                        help="If sign-in is needed and Gmail isn't set up, ask for the code.")
         s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("dashboard", help="Rebuild dashboard.html/.svg from the newest CSVs")
+    s.add_argument("--latest", help="Folder of CSVs (default: <data_dir>/latest)")
+    s.add_argument("--out", help="Where to write (default: <data_dir>)")
+    s.set_defaults(func=cmd_dashboard)
 
     s = sub.add_parser("status", help="Show settings and the last run")
     s.set_defaults(func=cmd_status)

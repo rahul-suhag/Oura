@@ -52,6 +52,10 @@ renaming fields.
 ### Statistical honesty built in
 - Durations are reported in **seconds**; `build_daily()` adds `*_hours` helpers
   alongside (never overwriting) the originals.
+- `sleepmodel.csv` has one row per sleep *session* (naps too); `build_daily()`
+  keeps the `long_sleep` session per day as `sleepmodel_daily_*` columns
+  (duration, HRV, heart rate, efficiency, ...). `dailyspo2`'s JSON cell is
+  unpacked into `dailyspo2_spo2_average`.
 - Normality is an exploratory flag; the test's i.i.d. assumption is already
   shaky for an autocorrelated daily series.
 - Correlations are **exploratory, not confirmatory** — autocorrelation,

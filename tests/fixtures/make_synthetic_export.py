@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate a realistic *synthetic* Oura export for testing the analysis layer.
 
-This is fake data (seeded RNG), used only to exercise load_oura.R / eda_report.R
-without needing a real export. Semicolon-separated, with the real file and column
-names, deliberate missing days, and a few injected outliers so the EDA has
-something to find.
+Fake data (seeded RNG) in the layout of the real export as documented by
+Cracked-Oura's importer: semicolon-separated, one row per day in the daily
+files, one row per sleep *session* in sleepmodel.csv (naps included), JSON in
+the contributors and spo2_percentage columns, deliberate missing days, and a
+few injected outliers so the EDA has something to find.
 
 Usage:
     python make_synthetic_export.py OUTDIR [--days 180 --seed 42]
@@ -12,18 +13,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import math
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
 def _write_csv(path: Path, header: list[str], rows: list[list]) -> None:
-    # Oura uses ';' as the delimiter and no quoting for simple values.
-    lines = [";".join(header)]
-    for r in rows:
-        lines.append(";".join("" if v is None else str(v) for v in r))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Oura uses ';'. csv.writer quotes fields that contain quotes (the JSON ones).
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(header)
+        for r in rows:
+            w.writerow(["" if v is None else v for v in r])
 
 
 def main() -> None:
@@ -32,61 +36,89 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=180)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
-    rng = random.Random(args.seed)
+    generate(args.outdir, args.days, args.seed)
 
-    out = args.outdir
+
+def generate(out: Path, days: int = 180, seed: int = 42) -> None:
+    """Write the synthetic export into ``out`` (also importable from tests)."""
+    rng = random.Random(seed)
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    start = date.today() - timedelta(days=args.days - 1)
-    days = [start + timedelta(days=i) for i in range(args.days)]
+    start = date.today() - timedelta(days=days - 1)
+    all_days = [start + timedelta(days=i) for i in range(days)]
 
-    sleep_rows, readiness_rows, activity_rows, spo2_rows = [], [], [], []
+    sleep, sessions, readiness, activity, spo2, stress, cv_age = [], [], [], [], [], [], []
+    vascular = 34
 
-    for i, d in enumerate(days):
+    for i, d in enumerate(all_days):
         iso = d.isoformat()
-        # A slow weekly rhythm + noise; weekends sleep a bit longer.
+        ts = f"{iso}T04:00:00+00:00"
         weekend = d.weekday() >= 5
-        base_sleep_h = 7.2 + (0.6 if weekend else 0.0) + 0.4 * math.sin(i / 7.0)
-        sleep_seconds = int(max(3.5, rng.gauss(base_sleep_h, 0.8)) * 3600)
-        sleep_score = int(min(100, max(30, rng.gauss(82 - (6 if not weekend else 0), 8))))
+        if i % 23 == 0:            # ring not worn: no rows at all for this day
+            continue
+
+        # --- sleep: one long_sleep session, sometimes a nap ---------------------
+        base_h = 7.2 + (0.6 if weekend else 0.0) + 0.4 * math.sin(i / 7.0)
+        total = int(max(3.5, rng.gauss(base_h, 0.8)) * 3600)
+        if i == 5:
+            total = 16 * 3600                       # injected outlier: 16 h "sleep"
         hr_avg = round(rng.gauss(54, 4), 1)
+        hr_low = int(hr_avg - rng.uniform(3, 8))
         hrv = int(max(10, rng.gauss(45, 12)))
+        bed_start = datetime.combine(d - timedelta(days=1), datetime.min.time()) + timedelta(hours=23, minutes=rng.randint(0, 59))
+        bed_end = bed_start + timedelta(seconds=total + rng.randint(600, 2400))
+        sessions.append([f"s{i}", iso, "long_sleep", bed_start.isoformat(), bed_end.isoformat(),
+                         int(rng.gauss(88, 5)), rng.randint(300, 1500), total,
+                         int(total * 0.2), int(total * 0.22), int(total * 0.58),
+                         int(rng.uniform(600, 2400)), hr_avg, hrv, hr_low, 1, int((bed_end - bed_start).total_seconds())])
+        if rng.random() < 0.15:                      # an afternoon nap
+            nap = rng.randint(900, 3600)
+            sessions.append([f"n{i}", iso, "late_nap", f"{iso}T14:00:00", f"{iso}T15:00:00",
+                             None, None, nap, None, None, None, None, None, None, None, 1, nap + 300])
+        sleep_score = int(min(100, max(30, rng.gauss(82 - (6 if not weekend else 0), 8))))
+        sleep.append([f"d{i}", iso, sleep_score,
+                      json.dumps({"deep_sleep": rng.randint(60, 100), "efficiency": rng.randint(70, 100),
+                                  "total_sleep": rng.randint(50, 100)}), ts])
 
-        # Missing day: ring not worn ~ every 23rd day (gap handling test).
-        worn = (i % 23) != 0
+        # --- readiness ---------------------------------------------------------------
+        readiness.append([f"r{i}", iso, int(min(100, max(30, rng.gauss(80, 9)))),
+                          round(rng.gauss(0.0, 0.25), 2), round(rng.gauss(0.0, 0.15), 2),
+                          json.dumps({"hrv_balance": rng.randint(50, 100), "resting_heart_rate": rng.randint(50, 100)}), ts])
 
-        if worn:
-            sleep_rows.append([iso, sleep_score, sleep_seconds, hr_avg, hrv])
-            readiness_rows.append([
-                iso,
-                int(min(100, max(30, rng.gauss(80, 9)))),
-                round(rng.gauss(36.5, 0.15), 2),   # temperature_deviation-ish
-            ])
-            steps = int(max(0, rng.gauss(8500 - (2500 if weekend else 0), 3000)))
-            activity_rows.append([
-                iso,
-                int(min(100, max(20, rng.gauss(78, 11)))),
-                steps,
-                int(steps * rng.uniform(0.03, 0.05)),  # active_calories ~ steps
-            ])
-            spo2_rows.append([iso, round(rng.gauss(96.5, 1.0), 1)])
+        # --- activity ------------------------------------------------------------------
+        steps = int(max(0, rng.gauss(8500 - (2500 if weekend else 0), 3000)))
+        if i == 10:
+            steps = 95000                             # injected outlier: impossible step count
+        activity.append([f"a{i}", iso, int(min(100, max(20, rng.gauss(78, 11)))), steps,
+                         int(2000 + steps * 0.03), int(steps * rng.uniform(0.03, 0.05)),
+                         round(rng.uniform(1.3, 1.8), 2), int(steps * 0.7),
+                         json.dumps({"meet_daily_targets": rng.randint(40, 100)}), ts])
 
-    # Inject a couple of obvious outliers for the EDA to flag.
-    if len(activity_rows) > 10:
-        activity_rows[10][2] = 95000          # impossible step count
-    if len(sleep_rows) > 5:
-        sleep_rows[5][2] = int(16 * 3600)     # 16h "sleep"
+        # --- the rest -----------------------------------------------------------------------
+        spo2.append([f"o{i}", iso, json.dumps({"average": round(rng.gauss(96.5, 1.0), 1)}), rng.randint(0, 8)])
+        stress.append([f"t{i}", iso, int(max(0, rng.gauss(5400, 2400))), int(max(0, rng.gauss(14400, 3600))),
+                       rng.choice(["normal", "restored", "stressful"])])
+        if rng.random() < 0.02:
+            vascular += rng.choice([-1, 1])
+        cv_age.append([f"c{i}", iso, vascular])
 
-    _write_csv(out / "dailysleep.csv",
-               ["day", "score", "total_sleep_duration", "average_heart_rate", "average_hrv"],
-               sleep_rows)
+    _write_csv(out / "dailysleep.csv", ["id", "day", "score", "contributors", "timestamp"], sleep)
+    _write_csv(out / "sleepmodel.csv",
+               ["id", "day", "type", "bedtime_start", "bedtime_end", "efficiency", "latency",
+                "total_sleep_duration", "deep_sleep_duration", "rem_sleep_duration", "light_sleep_duration",
+                "awake_time", "average_heart_rate", "average_hrv", "lowest_heart_rate", "period", "time_in_bed"],
+               sessions)
     _write_csv(out / "dailyreadiness.csv",
-               ["day", "score", "temperature"], readiness_rows)
+               ["id", "day", "score", "temperature_deviation", "temperature_trend_deviation", "contributors", "timestamp"],
+               readiness)
     _write_csv(out / "dailyactivity.csv",
-               ["day", "score", "steps", "active_calories"], activity_rows)
-    _write_csv(out / "dailyspo2.csv",
-               ["day", "spo2_percentage"], spo2_rows)
+               ["id", "day", "score", "steps", "total_calories", "active_calories", "average_met_minutes",
+                "equivalent_walking_distance", "contributors", "timestamp"], activity)
+    _write_csv(out / "dailyspo2.csv", ["id", "day", "spo2_percentage", "breathing_disturbance_index"], spo2)
+    _write_csv(out / "dailystress.csv", ["id", "day", "stress_high", "recovery_high", "day_summary"], stress)
+    _write_csv(out / "dailycardiovascularage.csv", ["id", "day", "vascular_age"], cv_age)
 
-    print(f"Wrote synthetic export to {out} ({len(sleep_rows)} sleep days)")
+    print(f"Wrote synthetic export to {out} ({len(sleep)} days with data)")
 
 
 if __name__ == "__main__":
